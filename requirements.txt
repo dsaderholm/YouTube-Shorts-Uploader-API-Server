@@ -1,0 +1,13 @@
+# Core dependencies
+flask==2.3.3
+werkzeug==2.3.7
+google-api-python-client==2.108.0
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+
+# Video processing
+moviepy==1.0.3
+Pillow==10.0.1
+
+# Utils
+python-dotenv==1.0.0

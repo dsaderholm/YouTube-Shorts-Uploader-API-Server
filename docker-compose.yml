@@ -1,0 +1,23 @@
+networks:
+  video_generation:
+    external: true
+    name: Video Generation
+
+services:
+  youtube-shorts:
+    build: .
+    networks:
+      video_generation:
+        ipv4_address: 10.20.0.18
+    ports:
+      - 8048:8048
+    restart: unless-stopped
+    volumes:
+      - instagram-uploader_instagram-reels_sounds:/app/sounds
+      - youtube-shorts_config:/app/config
+
+volumes:
+  instagram-uploader_instagram-reels_sounds:
+    external: true
+  youtube-shorts_config:
+    name: youtube-shorts_config
