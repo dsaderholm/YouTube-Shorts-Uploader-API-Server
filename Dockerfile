@@ -15,5 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY app /app/app
 
+# Make sure Python can find our modules
+ENV PYTHONPATH=/app
+
 # Run the application
 CMD ["python", "-m", "app.main"]
