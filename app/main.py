@@ -94,8 +94,6 @@ def upload_video():
     temp_files = []  # Keep track of temporary files to clean up
 
     try:
-        logger.info(f"Form data received: {dict(request.form)}")  # Debug line
-
         # Validate request content type
         if not request.content_type or 'multipart/form-data' not in request.content_type:
             return jsonify({'error': 'Invalid content type. Must be multipart/form-data'}), 400
@@ -112,15 +110,7 @@ def upload_video():
             return jsonify({'error': f'Invalid file type. Allowed types are: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
 
         # Get and validate parameters
-        title = request.form.get('description')
-        logger.info(f"Title from description: {title}")  # Debug line
-        
-        if not title or not title.strip():
-            return jsonify({'error': 'Title (description parameter) is required'}), 400
-        
-        title = title.strip()
-        logger.info(f"Cleaned title: {title}")  # Debug line
-
+        title = request.form.get('description', '')
         accountname = request.form.get('accountname')
         hashtags = request.form.get('hashtags', '').split(',') if request.form.get('hashtags') else []
         sound_name = request.form.get('sound_name')
@@ -173,26 +163,30 @@ def upload_video():
                 return jsonify({'error': f'Error processing audio: {str(e)}'}), 500
 
         # Process hashtags
-        hashtag_text = ''
         if hashtags and hashtags[0]:  # Only add hashtags if the list is not empty and first element is not empty
             # Remove any existing '#' from the hashtags before adding them
             cleaned_hashtags = [tag.strip().lstrip('#') for tag in hashtags if tag.strip()]
             hashtag_text = ' ' + ' '.join(f'#{tag}' for tag in cleaned_hashtags)
+        else:
+            hashtag_text = ''
 
         # Upload to YouTube
         try:
             youtube = get_youtube_service(accounts[accountname])
 
-            # Add #Shorts and any additional hashtags to the title
-            video_title = f"{title} #Shorts{hashtag_text}"
-            logger.info(f"Final video title: {video_title}")  # Debug line
+            # Ensure UTF-8 encoding for the title
+            title_utf8 = title.encode('utf-8', errors='ignore').decode('utf-8')
             
+            # Add #Shorts and hashtags
+            video_title = f"{title_utf8} #Shorts{hashtag_text}"
+            logger.info(f"Using video title: {video_title}")
+
             request_body = {
                 'snippet': {
                     'title': video_title,
-                    'description': '',  # Empty description
+                    'description': '',
                     'tags': hashtags,
-                    'categoryId': '22'  # People & Blogs category
+                    'categoryId': '22'
                 },
                 'status': {
                     'privacyStatus': 'public',
@@ -229,7 +223,8 @@ def upload_video():
             })
 
         except HttpError as e:
-            error_message = json.loads(e.content)['error']['message']
+            error_content = json.loads(e.content.decode('utf-8'))
+            error_message = error_content.get('error', {}).get('message', str(e))
             logger.error(f"Error uploading to YouTube: {error_message}")
             return jsonify({'error': f'Error uploading to YouTube: {error_message}'}), 500
         except Exception as e:
