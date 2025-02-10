@@ -10,7 +10,7 @@ services:
       video_generation:
         ipv4_address: 10.20.0.18
     ports:
-      - 8048:8048
+      - 8999:8048
     restart: unless-stopped
     volumes:
       - instagram-uploader_instagram-reels_sounds:/app/sounds
