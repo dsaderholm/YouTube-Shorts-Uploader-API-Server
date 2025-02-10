@@ -12,11 +12,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
-COPY . .
-
-# Create necessary directories
-RUN mkdir -p /app/temp
+# Copy application files
+COPY app /app/app
 
 # Run the application
 CMD ["python", "-m", "app.main"]
