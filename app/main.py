@@ -31,12 +31,40 @@ MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB limit
 # Ensure upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def clean_title(title):
-    # Replace question marks with nothing
-    clean = title.replace('?', '')
-    # Remove any other problematic characters
-    clean = re.sub(r'[^\w\s-]', '', clean)
-    return clean.strip()
+def clean_title(title, hashtags=None, max_length=100):
+    # Strip forbidden characters
+    clean = re.sub(r'[<>:{}\[\]|\\^~"\'`]', '', title)
+    
+    # Remove extra whitespace
+    clean = ' '.join(clean.split())
+    
+    # Prepare hashtags
+    if hashtags and hashtags[0]:
+        # Remove any existing '#' from the hashtags before adding them
+        cleaned_hashtags = [tag.strip().lstrip('#') for tag in hashtags if tag.strip()]
+        hashtag_text = ' ' + ' '.join(f'#{tag}' for tag in cleaned_hashtags)
+        hashtag_text += ' #Shorts'
+    else:
+        hashtag_text = ' #Shorts'
+    
+    # Calculate available space for title (subtracting space for hashtags)
+    available_length = max_length - len(hashtag_text)
+    
+    # Truncate to available length while preserving whole words
+    clean = clean.strip()
+    if len(clean) > available_length:
+        # Split into words and start trimming
+        words = clean.split()
+        truncated = ''
+        for word in words:
+            if len(truncated) + len(word) + 1 <= available_length:
+                truncated += word + ' '
+            else:
+                break
+        clean = truncated.strip()
+    
+    # Combine title with hashtags
+    return clean + hashtag_text
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -171,29 +199,29 @@ def upload_video():
                 return jsonify({'error': f'Error processing audio: {str(e)}'}), 500
 
         # Process hashtags
-        if hashtags and hashtags[0]:  # Only add hashtags if the list is not empty and first element is not empty
-            # Remove any existing '#' from the hashtags before adding them
+        if hashtags and hashtags[0]:  # Remove any existing '#' from the hashtags
             cleaned_hashtags = [tag.strip().lstrip('#') for tag in hashtags if tag.strip()]
-            hashtag_text = ' ' + ' '.join(f'#{tag}' for tag in cleaned_hashtags)
         else:
-            hashtag_text = ''
+            cleaned_hashtags = []
 
         # Upload to YouTube
         try:
             youtube = get_youtube_service(accounts[accountname])
 
-            # Clean up the title
-            clean_video_title = clean_title(title)
+            # Clean up the title, passing cleaned hashtags
+            clean_video_title = clean_title(title, cleaned_hashtags)
             
-            # Add #Shorts and hashtags
-            video_title = f"{clean_video_title} #Shorts{hashtag_text}"
-            logger.info(f"Using video title: {video_title}")
+            logger.info(f"Using video title: {clean_video_title}")
+
+            # Prepare description
+            # If the original title is different from the clean title, use the full title in description
+            description = title if len(title) > len(clean_video_title.split(' #Shorts')[0]) else ''
 
             request_body = {
                 'snippet': {
-                    'title': video_title,
-                    'description': '',
-                    'tags': hashtags,
+                    'title': clean_video_title,
+                    'description': description,
+                    'tags': cleaned_hashtags,
                     'categoryId': '22'
                 },
                 'status': {
