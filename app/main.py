@@ -94,6 +94,8 @@ def upload_video():
     temp_files = []  # Keep track of temporary files to clean up
 
     try:
+        logger.info(f"Form data received: {dict(request.form)}")  # Debug line
+
         # Validate request content type
         if not request.content_type or 'multipart/form-data' not in request.content_type:
             return jsonify({'error': 'Invalid content type. Must be multipart/form-data'}), 400
@@ -110,7 +112,15 @@ def upload_video():
             return jsonify({'error': f'Invalid file type. Allowed types are: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
 
         # Get and validate parameters
-        title = request.form.get('description', '')  # Title comes from description parameter
+        title = request.form.get('description')
+        logger.info(f"Title from description: {title}")  # Debug line
+        
+        if not title or not title.strip():
+            return jsonify({'error': 'Title (description parameter) is required'}), 400
+        
+        title = title.strip()
+        logger.info(f"Cleaned title: {title}")  # Debug line
+
         accountname = request.form.get('accountname')
         hashtags = request.form.get('hashtags', '').split(',') if request.form.get('hashtags') else []
         sound_name = request.form.get('sound_name')
@@ -174,7 +184,8 @@ def upload_video():
             youtube = get_youtube_service(accounts[accountname])
 
             # Add #Shorts and any additional hashtags to the title
-            video_title = f"{title.strip()} #Shorts{hashtag_text}"
+            video_title = f"{title} #Shorts{hashtag_text}"
+            logger.info(f"Final video title: {video_title}")  # Debug line
             
             request_body = {
                 'snippet': {
