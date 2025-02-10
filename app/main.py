@@ -12,6 +12,7 @@ import google_auth_oauthlib.flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
+import re
 
 # Set up logging
 logging.basicConfig(
@@ -29,6 +30,13 @@ MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB limit
 
 # Ensure upload folder exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def clean_title(title):
+    # Replace question marks with nothing
+    clean = title.replace('?', '')
+    # Remove any other problematic characters
+    clean = re.sub(r'[^\w\s-]', '', clean)
+    return clean.strip()
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -174,11 +182,11 @@ def upload_video():
         try:
             youtube = get_youtube_service(accounts[accountname])
 
-            # Ensure UTF-8 encoding for the title
-            title_utf8 = title.encode('utf-8', errors='ignore').decode('utf-8')
+            # Clean up the title
+            clean_video_title = clean_title(title)
             
             # Add #Shorts and hashtags
-            video_title = f"{title_utf8} #Shorts{hashtag_text}"
+            video_title = f"{clean_video_title} #Shorts{hashtag_text}"
             logger.info(f"Using video title: {video_title}")
 
             request_body = {
