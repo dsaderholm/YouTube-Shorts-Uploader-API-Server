@@ -115,6 +115,7 @@ def upload_video():
         hashtags = request.form.get('hashtags', '').split(',') if request.form.get('hashtags') else []
         sound_name = request.form.get('sound_name')
         sound_aud_vol = request.form.get('sound_aud_vol', 'mix')
+        video_file = request.form.get('video_file')  # Get the original video filename
 
         if not accountname:
             return jsonify({'error': 'Account name is required'}), 400
@@ -174,9 +175,21 @@ def upload_video():
         try:
             youtube = get_youtube_service(accounts[accountname])
             
+            # Use original filename if provided, otherwise use description
+            if video_file:
+                title = os.path.splitext(video_file)[0]
+            elif description:
+                title = description[:100]  # YouTube title limit is 100 characters
+            else:
+                from datetime import datetime
+                title = f"Short {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+            # Add #Shorts to the title
+            video_title = f"{title} #Shorts"
+            
             request_body = {
                 'snippet': {
-                    'title': os.path.splitext(video.filename)[0] + ' #Shorts',
+                    'title': video_title,
                     'description': caption,
                     'tags': hashtags,
                     'categoryId': '22'  # People & Blogs category
