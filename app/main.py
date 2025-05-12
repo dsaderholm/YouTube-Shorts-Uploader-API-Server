@@ -4,11 +4,13 @@ import os
 import json
 import sys
 from app.audio_processor import AudioProcessor
+from app.utils import update_account_token
 import tempfile
 import logging
 import traceback
 import google.oauth2.credentials
 import google_auth_oauthlib.flow
+import google.auth.transport.requests
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -115,15 +117,61 @@ def find_sound_file(sound_name):
         logger.error(f"Error searching for sound file: {str(e)}")
         return None
 
-def get_youtube_service(credentials_data):
-    credentials = google.oauth2.credentials.Credentials(
-        None,
-        refresh_token=credentials_data['refresh_token'],
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=credentials_data['client_id'],
-        client_secret=credentials_data['client_secret']
-    )
-    return build('youtube', 'v3', credentials=credentials)
+def get_youtube_service(credentials_data, account_name=None):
+    try:
+        # Create a Request object for token refresh
+        request = google.auth.transport.requests.Request()
+        
+        # Initialize credentials, treating None as a non-existent token
+        token = credentials_data.get('token')
+        if token == 'None':
+            token = None
+            
+        credentials = google.oauth2.credentials.Credentials(
+            token=token,
+            refresh_token=credentials_data['refresh_token'],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=credentials_data['client_id'],
+            client_secret=credentials_data['client_secret']
+        )
+        
+        # Log credential info for debugging (excluding sensitive info)
+        logger.info(f"Credentials initialized for YouTube API. Token present: {bool(token)}, Refresh token present: {bool(credentials_data.get('refresh_token'))}, Client ID present: {bool(credentials_data.get('client_id'))}, Client Secret present: {bool(credentials_data.get('client_secret'))}")
+        
+        # Force token refresh if no token or token is expired
+        if not token or credentials.expired:
+            logger.info("No token or token expired, refreshing token")
+            try:
+                credentials.refresh(request)
+                logger.info("Token refreshed successfully")
+                
+                # Save the new token back to the accounts.json file
+                if credentials.token and account_name:
+                    logger.info(f"Saving new token for future use for account {account_name}")
+                    # Also save the token expiry time if available
+                    if hasattr(credentials, 'expiry') and credentials.expiry:
+                        expiry_iso = credentials.expiry.isoformat()
+                        update_account_token(account_name, credentials.token, expiry_iso)
+                    else:
+                        update_account_token(account_name, credentials.token)
+                elif credentials.token:
+                    logger.warning("Token refreshed but no account name provided, can't save token")
+                else:
+                    logger.warning("No token received after refresh")
+                
+            except Exception as refresh_error:
+                logger.error(f"Token refresh failed: {str(refresh_error)}")
+                
+                # If refresh_token is invalid, we might need to guide the user to re-authenticate
+                if 'invalid_grant' in str(refresh_error).lower():
+                    logger.error("The refresh token appears to be invalid or expired. User needs to re-authenticate.")
+                    raise Exception("OAuth refresh token is invalid. Please re-authenticate the YouTube account.")
+                raise
+        
+        return build('youtube', 'v3', credentials=credentials)
+    except Exception as e:
+        logger.error(f"Error initializing YouTube service: {str(e)}")
+        raise
 
 @app.route('/upload', methods=['POST'])
 def upload_video():
@@ -206,7 +254,7 @@ def upload_video():
 
         # Upload to YouTube
         try:
-            youtube = get_youtube_service(accounts[accountname])
+            youtube = get_youtube_service(accounts[accountname], accountname)
 
             # Clean up the title, passing cleaned hashtags
             clean_video_title = clean_title(title, cleaned_hashtags)
@@ -259,10 +307,23 @@ def upload_video():
             })
 
         except HttpError as e:
-            error_content = json.loads(e.content.decode('utf-8'))
-            error_message = error_content.get('error', {}).get('message', str(e))
-            logger.error(f"Error uploading to YouTube: {error_message}")
-            return jsonify({'error': f'Error uploading to YouTube: {error_message}'}), 500
+            try:
+                error_content = json.loads(e.content.decode('utf-8'))
+                error_reason = error_content.get('error', {}).get('errors', [{}])[0].get('reason', '')
+                error_message = error_content.get('error', {}).get('message', str(e))
+                error_details = error_content.get('error', {}).get('errors', [{}])[0]
+                
+                logger.error(f"Error uploading to YouTube: {error_reason}: {error_message}")
+                logger.error(f"Error details: {error_details}")
+                
+                return jsonify({
+                    'error': f'Error uploading to YouTube: {error_reason}: {error_message}',
+                    'details': error_details
+                }), 500
+            except Exception as parse_error:
+                logger.error(f"Error parsing HttpError: {str(e)} / Parser error: {str(parse_error)}")
+                logger.error(f"Raw error content: {e.content[:500] if hasattr(e, 'content') else 'No content'}")
+                return jsonify({'error': f'Error uploading to YouTube: {str(e)}'}), 500
         except Exception as e:
             logger.error(f"Error uploading to YouTube: {str(e)}")
             return jsonify({'error': f'Error uploading to YouTube: {str(e)}'}), 500
@@ -275,6 +336,124 @@ def upload_video():
     finally:
         # Cleanup temporary files
         cleanup_temp_files(temp_files)
+
+@app.route('/check-account', methods=['GET'])
+def check_account():
+    try:
+        accountname = request.args.get('accountname')
+        
+        if not accountname:
+            return jsonify({'error': 'Account name is required as a query parameter'}), 400
+            
+        # Load account credentials
+        try:
+            accounts = load_accounts()
+        except Exception as e:
+            logger.error(f"Error loading accounts: {str(e)}")
+            return jsonify({'error': 'Error loading account configuration'}), 500
+            
+        if accountname not in accounts:
+            return jsonify({'error': 'Account not found'}), 404
+            
+        account_data = accounts[accountname]
+        
+        # Create a sanitized version of the account data (without sensitive info)
+        safe_data = {
+            'account': accountname,
+            'has_token': bool(account_data.get('token')),
+            'has_refresh_token': bool(account_data.get('refresh_token')),
+            'token_expiry': account_data.get('token_expiry'),
+            'channel_title': account_data.get('channel_title', 'Unknown'),
+            'scopes': account_data.get('scopes', [])
+        }
+        
+        return jsonify({
+            'success': True,
+            'account_info': safe_data
+        })
+            
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Unexpected error in check_account: {str(e)}\n{error_trace}")
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+
+@app.route('/refresh-token', methods=['POST'])
+def refresh_token():
+    try:
+        data = request.get_json()
+        accountname = data.get('accountname')
+        
+        if not accountname:
+            return jsonify({'error': 'Account name is required'}), 400
+            
+        # Load account credentials
+        try:
+            accounts = load_accounts()
+        except Exception as e:
+            logger.error(f"Error loading accounts: {str(e)}")
+            return jsonify({'error': 'Error loading account configuration'}), 500
+            
+        if accountname not in accounts:
+            return jsonify({'error': 'Account not found'}), 404
+            
+        # Try to refresh the token
+        try:
+            credentials_data = accounts[accountname]
+            
+            # Create a Request object for token refresh
+            request_obj = google.auth.transport.requests.Request()
+            
+            # Initialize credentials
+            token = credentials_data.get('token')
+            if token == 'None':
+                token = None
+                
+            credentials = google.oauth2.credentials.Credentials(
+                token=token,
+                refresh_token=credentials_data['refresh_token'],
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=credentials_data['client_id'],
+                client_secret=credentials_data['client_secret']
+            )
+            
+            # Force token refresh
+            credentials.refresh(request_obj)
+            
+            # Save the new token
+            if credentials.token:
+                # Also save the token expiry time if available
+                if hasattr(credentials, 'expiry') and credentials.expiry:
+                    expiry_iso = credentials.expiry.isoformat()
+                    update_account_token(accountname, credentials.token, expiry_iso)
+                else:
+                    update_account_token(accountname, credentials.token)
+                    
+                return jsonify({
+                    'success': True,
+                    'message': 'Token refreshed successfully',
+                    'expires': expiry_iso if hasattr(credentials, 'expiry') and credentials.expiry else 'unknown'
+                })
+            else:
+                return jsonify({
+                    'error': 'No token received after refresh'
+                }), 500
+                
+        except Exception as e:
+            error_message = str(e)
+            logger.error(f"Error refreshing token: {error_message}")
+            
+            if 'invalid_grant' in error_message.lower():
+                return jsonify({
+                    'error': 'OAuth refresh token is invalid or revoked',
+                    'message': 'You need to re-authenticate the YouTube account.'
+                }), 401
+            
+            return jsonify({'error': f'Error refreshing token: {error_message}'}), 500
+            
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        logger.error(f"Unexpected error in refresh_token: {str(e)}\n{error_trace}")
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8048, debug=True)
